@@ -1,4 +1,5 @@
 import os
+import sys
 import yaml
 import json
 from typing import Dict, List, Optional, Union, Any
@@ -47,6 +48,12 @@ def create_wrapper_from_config(config: Dict[str, Any], **overrides) -> Any:
     final_config = {**config, **overrides}
     wrapper_params = _extract_wrapper_params(final_config)
     wrapper = StreamDiffusionWrapper(**wrapper_params)
+    
+    # Setup IPAdapter if configured
+    if 'ipadapters' in final_config and final_config['ipadapters']:
+        wrapper = _setup_ipadapter_from_config(wrapper, final_config)
+    
+    # Extract prepare() parameters
     prepare_params = _extract_prepare_params(final_config)
     
     if prepare_params.get('prompt'):
@@ -130,6 +137,124 @@ def _prepare_controlnet_configs(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     return controlnet_configs
 
 
+def _prepare_ipadapter_configs(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Prepare IPAdapter configurations for wrapper"""
+    ipadapter_configs = []
+    
+    for ip_config in config['ipadapters']:
+        ipadapter_config = {
+            'ipadapter_model_path': ip_config['ipadapter_model_path'],
+            'image_encoder_path': ip_config['image_encoder_path'],
+            'style_image': ip_config.get('style_image'),
+            'scale': ip_config.get('scale', 1.0),
+            'enabled': ip_config.get('enabled', True),
+        }
+        ipadapter_configs.append(ipadapter_config)
+    
+    return ipadapter_configs
+
+
+def _setup_ipadapter_from_config(wrapper, config: Dict[str, Any]):
+    """Setup IPAdapter pipeline from configuration"""
+    print("_setup_ipadapter_from_config: Starting IPAdapter setup...")
+    print(f"_setup_ipadapter_from_config: Python path: {sys.path[:3]}...")  # Show first 3 entries
+    print(f"_setup_ipadapter_from_config: Current working directory: {os.getcwd()}")
+    
+    try:
+        print("_setup_ipadapter_from_config: Attempting to import IPAdapterPipeline...")
+        
+        # Add Diffusers_IPAdapter to path before importing
+        import pathlib
+        current_file = pathlib.Path(__file__)
+        # Diffusers_IPAdapter is now located in the ipadapter directory
+        diffusers_ipadapter_path = current_file.parent.parent / "ipadapter" / "Diffusers_IPAdapter"
+        print(f"_setup_ipadapter_from_config: Adding Diffusers_IPAdapter to path: {diffusers_ipadapter_path}")
+        print(f"_setup_ipadapter_from_config: Diffusers_IPAdapter exists: {diffusers_ipadapter_path.exists()}")
+        
+        if diffusers_ipadapter_path.exists():
+            sys.path.insert(0, str(diffusers_ipadapter_path))
+            print("_setup_ipadapter_from_config: Successfully added Diffusers_IPAdapter to Python path")
+        else:
+            print("_setup_ipadapter_from_config: WARNING: Diffusers_IPAdapter directory not found!")
+            print(f"_setup_ipadapter_from_config: Expected location: {diffusers_ipadapter_path}")
+        
+        # Import here to avoid circular imports
+        from ..ipadapter import IPAdapterPipeline
+        print("_setup_ipadapter_from_config: Successfully imported IPAdapterPipeline")
+        
+        import torch
+        print("_setup_ipadapter_from_config: Successfully imported torch")
+        
+        # Create IPAdapter pipeline
+        device = config.get('device', 'cuda')
+        dtype = _parse_dtype(config.get('dtype', 'float16'))
+        print(f"_setup_ipadapter_from_config: Creating IPAdapterPipeline with device={device}, dtype={dtype}")
+        
+        ipadapter_pipeline = IPAdapterPipeline(
+            stream_diffusion=wrapper.stream,
+            device=device,
+            dtype=dtype
+        )
+        print("_setup_ipadapter_from_config: Successfully created IPAdapterPipeline")
+        
+        # Add each configured IPAdapter
+        ipadapter_configs = _prepare_ipadapter_configs(config)
+        print(f"_setup_ipadapter_from_config: Found {len(ipadapter_configs)} IPAdapter configs")
+        
+        for i, ip_config in enumerate(ipadapter_configs):
+            if ip_config.get('enabled', True):
+                print(f"_setup_ipadapter_from_config: Adding IPAdapter {i}: {ip_config['ipadapter_model_path']}")
+                ipadapter_pipeline.add_ipadapter(
+                    ipadapter_model_path=ip_config['ipadapter_model_path'],
+                    image_encoder_path=ip_config['image_encoder_path'],
+                    style_image=ip_config.get('style_image'),
+                    scale=ip_config.get('scale', 1.0)
+                )
+                print(f"_setup_ipadapter_from_config: Successfully added IPAdapter {i}")
+            else:
+                print(f"_setup_ipadapter_from_config: Skipping disabled IPAdapter {i}")
+        
+        # Replace wrapper with IPAdapter-enabled pipeline
+        # Copy wrapper attributes to maintain compatibility
+        ipadapter_pipeline.batch_size = getattr(wrapper, 'batch_size', 1)
+        
+        # Store reference to original wrapper for attribute forwarding
+        ipadapter_pipeline._original_wrapper = wrapper
+        print("_setup_ipadapter_from_config: IPAdapter setup completed successfully")
+        
+        return ipadapter_pipeline
+        
+    except ImportError as e:
+        print(f"_setup_ipadapter_from_config: ImportError - {e}")
+        print(f"_setup_ipadapter_from_config: Failed to import IPAdapter module")
+        print("_setup_ipadapter_from_config: Checking if IPAdapter directory exists...")
+        
+        # Check if the ipadapter directory exists
+        import pathlib
+        current_file = pathlib.Path(__file__)
+        ipadapter_path = current_file.parent.parent / "ipadapter"
+        print(f"_setup_ipadapter_from_config: Looking for IPAdapter at: {ipadapter_path}")
+        print(f"_setup_ipadapter_from_config: IPAdapter directory exists: {ipadapter_path.exists()}")
+        
+        if ipadapter_path.exists():
+            print(f"_setup_ipadapter_from_config: Contents of IPAdapter directory:")
+            try:
+                for item in ipadapter_path.iterdir():
+                    print(f"_setup_ipadapter_from_config:   - {item.name}")
+            except Exception as dir_e:
+                print(f"_setup_ipadapter_from_config: Error listing directory: {dir_e}")
+        
+        print("_setup_ipadapter_from_config: IPAdapter not available, skipping IPAdapter setup")
+        return wrapper
+    except Exception as e:
+        print(f"_setup_ipadapter_from_config: Unexpected error - {type(e).__name__}: {e}")
+        import traceback
+        print("_setup_ipadapter_from_config: Full traceback:")
+        traceback.print_exc()
+        print("_setup_ipadapter_from_config: Falling back to wrapper without IPAdapter")
+        return wrapper
+
+
 def _parse_dtype(dtype_str: str) -> Any:
     """Parse dtype string to torch dtype"""
     import torch
@@ -164,3 +289,94 @@ def _validate_config(config: Dict[str, Any]) -> None:
             
             if 'model_id' not in controlnet:
                 raise ValueError(f"_validate_config: ControlNet {i} missing required 'model_id'")
+    
+    # Validate ipadapters if present
+    if 'ipadapters' in config:
+        if not isinstance(config['ipadapters'], list):
+            raise ValueError("_validate_config: 'ipadapters' must be a list")
+        
+        for i, ipadapter in enumerate(config['ipadapters']):
+            if not isinstance(ipadapter, dict):
+                raise ValueError(f"_validate_config: IPAdapter {i} must be a dictionary")
+            
+            if 'ipadapter_model_path' not in ipadapter:
+                raise ValueError(f"_validate_config: IPAdapter {i} missing required 'ipadapter_model_path'")
+            
+            if 'image_encoder_path' not in ipadapter:
+                raise ValueError(f"_validate_config: IPAdapter {i} missing required 'image_encoder_path'")
+
+
+# For backwards compatibility, provide simple functions that match expected usage patterns
+def get_controlnet_config(config_dict: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
+    """
+    Get a specific ControlNet configuration by index
+    
+    Args:
+        config_dict: Full configuration dictionary
+        index: Index of the ControlNet to get
+        
+    Returns:
+        ControlNet configuration dictionary
+    """
+    if 'controlnets' not in config_dict or index >= len(config_dict['controlnets']):
+        raise IndexError(f"get_controlnet_config: ControlNet index {index} out of range")
+    
+    return config_dict['controlnets'][index]
+
+
+def get_pipeline_type(config_dict: Dict[str, Any]) -> str:
+    """
+    Get pipeline type from configuration, with fallback to SD 1.5
+    
+    Args:
+        config_dict: Configuration dictionary
+        
+    Returns:
+        Pipeline type string
+    """
+    return config_dict.get('pipeline_type', 'sd1.5')
+
+
+def get_ipadapter_config(config_dict: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
+    """
+    Get a specific IPAdapter configuration by index
+    
+    Args:
+        config_dict: Full configuration dictionary
+        index: Index of the IPAdapter to get
+        
+    Returns:
+        IPAdapter configuration dictionary
+    """
+    if 'ipadapters' not in config_dict or index >= len(config_dict['ipadapters']):
+        raise IndexError(f"get_ipadapter_config: IPAdapter index {index} out of range")
+    
+    return config_dict['ipadapters'][index]
+
+
+def load_ipadapter_config(config_path: Union[str, Path]) -> Dict[str, Any]:
+    """
+    Load IPAdapter configuration from YAML or JSON file
+    
+    Alias for load_config() for consistency with ControlNet naming
+    
+    Args:
+        config_path: Path to configuration file
+        
+    Returns:
+        Configuration dictionary
+    """
+    return load_config(config_path)
+
+
+def save_ipadapter_config(config: Dict[str, Any], config_path: Union[str, Path]) -> None:
+    """
+    Save IPAdapter configuration to YAML or JSON file
+    
+    Alias for save_config() for consistency with ControlNet naming
+    
+    Args:
+        config: Configuration dictionary to save
+        config_path: Path where to save the configuration
+    """
+    save_config(config, config_path) 
