@@ -337,4 +337,3 @@ class IPAdapterModule(OrchestratorUser):
             return UnetKwargsDelta()
 
         return _unet_hook
-

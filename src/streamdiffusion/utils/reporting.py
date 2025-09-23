@@ -26,4 +26,3 @@ def report_error(
         extra={"report_error": True},
     )
 
-
