@@ -82,3 +82,4 @@ class FaceIDEmbeddingPreprocessor(IPAdapterEmbeddingPreprocessor):
             f"FaceIDEmbeddingPreprocessor.update_faceid_v2_weight: Updated weight to {self.faceid_v2_weight}"
         )
 
+

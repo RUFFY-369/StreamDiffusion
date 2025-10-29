@@ -485,4 +485,3 @@ def _validate_config(config: Dict[str, Any]) -> None:
         normalize_seed_weights = config['normalize_seed_weights']
         if not isinstance(normalize_seed_weights, bool):
             raise ValueError("_validate_config: 'normalize_seed_weights' must be a boolean value")
-

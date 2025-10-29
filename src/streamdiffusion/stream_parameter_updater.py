@@ -1487,3 +1487,4 @@ class StreamParameterUpdater(OrchestratorUser):
             logger.info(f"_update_hook_config: Removed extra processor {removed_idx}: {removed_processor.__class__.__name__}")
         
         logger.info(f"_update_hook_config: Finished updating {hook_type}, now has {len(hook_module.processors)} processors")
+
