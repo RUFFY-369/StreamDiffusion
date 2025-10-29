@@ -726,6 +726,7 @@ class StreamDiffusionWrapper:
                 denormalized_image_tensor = image
             if self.safety_checker(denormalized_image_tensor, self.safety_checker_threshold):
                 image = self.nsfw_fallback_img
+                logger.info(f"NSFW content detected, falling back to {self.nsfw_fallback_img} frame")
             elif self.safety_checker_fallback_type == "previous":
                 self.nsfw_fallback_img = image
 
@@ -1041,9 +1042,9 @@ class StreamDiffusionWrapper:
                 traceback.print_exc()
             raise RuntimeError(error_msg)
         else:
-            if hasattr(pipe, "text_encoder") and pipe.text_encoder is not None:
+            if not compile_engines_only and hasattr(pipe, "text_encoder") and pipe.text_encoder is not None:
                 pipe.text_encoder = pipe.text_encoder.to(device=self.device)
-            if hasattr(pipe, "text_encoder_2") and pipe.text_encoder_2 is not None:
+            if not compile_engines_only and hasattr(pipe, "text_encoder_2") and pipe.text_encoder_2 is not None:
                 pipe.text_encoder_2 = pipe.text_encoder_2.to(device=self.device)
 
         # If we get here, the model loaded successfully - break out of retry loop
@@ -1570,7 +1571,7 @@ class StreamDiffusionWrapper:
                 if self.use_safety_checker or safety_checker_engine_exists:
                     if not safety_checker_engine_exists:
                         from transformers import AutoModelForImageClassification
-                        self.safety_checker = AutoModelForImageClassification.from_pretrained(safety_checker_model_id).to("cuda")
+                        self.safety_checker = AutoModelForImageClassification.from_pretrained(safety_checker_model_id)
 
                         safety_checker_model = NSFWDetector(
                             device=self.device,
@@ -1585,7 +1586,7 @@ class StreamDiffusionWrapper:
                             model_config=safety_checker_model,
                             batch_size=self.batch_size if self.mode == "txt2img" else stream.frame_bff_size,
                             cuda_stream=None,
-                            load_engine=load_engine,
+                            load_engine=False,
                         )
                     
                     if load_engine:
@@ -1594,6 +1595,7 @@ class StreamDiffusionWrapper:
                             cuda_stream,
                             use_cuda_graph=True,
                         )
+                        logger.info("Safety Checker engine loaded successfully")
                     
             if acceleration == "sfast":
                 from streamdiffusion.acceleration.sfast import (
